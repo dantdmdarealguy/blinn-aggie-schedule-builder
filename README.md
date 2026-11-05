@@ -31,7 +31,15 @@ Tampermonkey checks this repo for updates on its own.
 
 Click the ⓘ on any added block for its CRN, meeting type, room, campus, instructor, and dates.
 
-Terms are matched by season and year: Blinn "Spring 2027" ↔ TAMU "Spring 2027 - College Station".
+### Terms and weeks
+
+- Terms are matched by season and year: Blinn "Spring 2027" ↔ TAMU "Spring 2027 - College Station". Blinn's
+  *Summer I*, *Summer II*, and *May Minimester* all show under TAMU's summer term.
+- Each class is only drawn in weeks it actually meets, based on its start and end dates. Pick a week in the scheduler's week
+  bar and the Blinn classes follow it. A synced class that doesn't meet in the selected week is marked *(not this week)*.
+- Each term you sync is saved separately. If you open a TAMU term you haven't synced at Blinn, the bar warns you with a
+  **term mismatch** notice that names the term you did sync.
+- If your Blinn sync is more than a week old, the bar reminds you to re-sync in case you've added or dropped classes.
 
 ## Privacy
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blinn Classes on Aggie Schedule Builder
 // @namespace    https://github.com/dantdmdarealguy/blinn-aggie-schedule-builder
-// @version      2.0.0
+// @version      2.1.0
 // @description  Shows your registered Blinn College classes on TAMU's Aggie Schedule Builder calendar, styled like native sections, and lets you preview swapping a TAMU section.
 // @author       dantdmdarealguy
 // @license      MIT
@@ -27,7 +27,14 @@
   const PREVIEWS = 'previews';
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const seasonKey = s => { const m = String(s ?? '').match(/(Spring|Summer|Fall|Winter)\D*?(\d{4})/i); return m ? `${m[1].toLowerCase()} ${m[2]}` : null; };
+  // "Spring 2027" / "Spring 2027 - College Station" → "spring 2027". Blinn's "Summer I/II 2027" and
+  // "May Minimester 2027" all map to TAMU's single summer term; week filtering keeps their dates apart.
+  const seasonKey = s => {
+    const m = String(s ?? '').match(/\b(Spring|Summer|Fall|Winter|May)\b\D*?(\d{4})/i);
+    if (!m) return null;
+    return `${/^may$/i.test(m[1]) ? 'summer' : m[1].toLowerCase()} ${m[2]}`;
+  };
+  const prettyTerm = key => String(key || '').replace(/^\w/, c => c.toUpperCase());
   const getVal = (k, d) => { try { return GM_getValue(k, d); } catch { return d; } };
   const setVal = (k, v) => { try { GM_setValue(k, v); } catch (e) { console.warn('[Blinn→AggieSB] could not save', e); } };
   const onValChange = (k, fn) => { try { GM_addValueChangeListener(k, fn); } catch { /* optional */ } };
@@ -146,6 +153,25 @@
     const labelMins = s => { const m = s.trim().match(/^(\d{1,2})(?::(\d\d))?\s*(am|pm)?$/i); if (!m) return null; let h = +m[1] % 12; if (/pm/i.test(m[3] || '')) h += 12; return h * 60 + (+m[2] || 0); };
     const usDate = iso => { const m = String(iso || '').match(/^(\d{4})-(\d\d)-(\d\d)/); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
     const tamuTerm = () => { const p = location.pathname.split('/'); return p[1] === 'terms' && p[2] ? decodeURIComponent(p[2]) : null; };
+    const STALE_DAYS = 7;
+
+    // ---- week awareness: only draw a meeting on days inside its start/end dates --------
+    const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const parseUS = s => { const m = String(s || '').match(/(\d\d)\/(\d\d)\/(\d{4})/); return m ? new Date(+m[3], +m[1] - 1, +m[2]) : null; };
+    function selectedWeek(cal) {
+      // The scheduler shows e.g. <h2>Week 2 (01/25/2027 - 02/01/2027)</h2> above the calendar.
+      const h = [...cal.parentElement.querySelectorAll('h1, h2, h3, h4')].find(e => /Week\s*\d+\s*\(/.test(e.textContent));
+      const m = h?.textContent.match(/\((\d\d\/\d\d\/\d{4})\s*-\s*\d\d\/\d\d\/\d{4}\)/);
+      return m ? { label: h.textContent.trim(), start: parseUS(m[1]) } : null;
+    }
+    function meetsOn(c, week, day) {
+      if (!week) return true; // no week selector found → show everything
+      const [from, to] = String(c.dates || '').split(/\s+-\s+/).map(parseUS);
+      if (!from || !to) return true;
+      const d = new Date(week.start);
+      d.setDate(d.getDate() + ((WEEKDAYS.indexOf(day) - d.getDay() + 7) % 7));
+      return d >= from && d <= to;
+    }
 
     const css = `
       .${CHIP}{position:absolute;left:0;width:100%;color:#000;font-size:14px;padding:0;border:none;z-index:1}
@@ -170,7 +196,7 @@
       .${BAR} button{padding:3px 10px;border:1px solid #500000;border-radius:3px;background:#500000;color:#fff;font:inherit;cursor:pointer}
       .${BAR} .bsx-pv{display:inline-flex;align-items:center;gap:4px;padding:1px 4px 1px 8px;border-radius:10px;background:rgba(73,134,231,.15)}
       .${BAR} .bsx-pv button{background:none;border:none;color:#333;padding:0 4px;font-size:15px;line-height:1}
-      .${BAR} .bsx-err{color:#b00020}
+      .${BAR} .bsx-err,.${BAR} .bsx-warn{color:#b00020}
       .bsx-pop{position:absolute;z-index:10000;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 4px 14px rgba(0,0,0,.2);
         padding:10px 14px;font-size:14px;line-height:1.45;color:#222;min-width:240px;max-width:320px}
       .bsx-pop h4{margin:0 0 4px;font-size:15px}
@@ -191,7 +217,9 @@
       const classes = terms.flatMap(t => t.classes.map(c => ({ ...c, color: PALETTE[crns.indexOf(c.crn) % PALETTE.length],
         tag: 'Blinn College · Registered' })));
       const syncedAt = Math.max(0, ...terms.map(t => t.syncedAt || 0));
-      return { classes, syncedAt };
+      const otherTerms = Object.values(getVal(STORE, {}))
+        .filter(t => !terms.includes(t) && t.classes?.length).map(t => t.description);
+      return { classes, syncedAt, matched: terms.length > 0, otherTerms };
     }
     const previewsFor = term => getVal(PREVIEWS, {})[term] || [];
     function savePreviews(term, list) {
@@ -265,7 +293,7 @@
     }
 
     // ---- toolbar above the calendar ----------------------------------------
-    function ensureBar(cal, term, blinn, previews) {
+    function ensureBar(cal, term, blinn, previews, week) {
       let bar = document.querySelector('.' + BAR);
       if (!bar || bar.nextElementSibling !== cal) {
         bar?.remove();
@@ -286,10 +314,27 @@
         });
         cal.parentElement.insertBefore(bar, cal);
       }
-      const courses = [...new Set(blinn.classes.map(c => `${c.subj} ${c.num}`))];
-      const status = courses.length
-        ? `<b>Blinn:</b> ${esc(courses.join(' · '))} <span style="opacity:.65">· synced ${esc(new Date(blinn.syncedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</span>`
-        : `<b>Blinn:</b> no classes synced for ${esc(seasonKey(term) || term)}. Open <a href="https://ban9reg.blinn.edu/StudentRegistrationSsb/ssb/registration" target="_blank" rel="noopener">Blinn → Register for Classes</a> once to sync.`;
+      const want = prettyTerm(seasonKey(term)) || term;
+      const blinnLink = text => `<a href="https://ban9reg.blinn.edu/StudentRegistrationSsb/ssb/registration" target="_blank" rel="noopener">${text}</a>`;
+      const courses = [...new Set(blinn.classes.map(c => `${c.subj} ${c.num}`))].map(name => {
+        const meets = blinn.classes.some(c => `${c.subj} ${c.num}` === name && c.days.some(d => meetsOn(c, week, d)));
+        return meets ? esc(name) : `<span style="opacity:.55" title="No meetings during ${esc(week?.label || 'this week')}">${esc(name)} (not this week)</span>`;
+      });
+      const ageDays = (Date.now() - blinn.syncedAt) / 864e5;
+      const synced = `synced ${esc(new Date(blinn.syncedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}`;
+      let status;
+      if (courses.length) {
+        status = `<b>Blinn:</b> ${courses.join(' · ')} ` + (ageDays > STALE_DAYS
+          ? `<span class="bsx-warn">· ⚠ ${synced} (${Math.floor(ageDays)} days ago) — ${blinnLink('re-sync')} if you've added or dropped classes</span>`
+          : `<span style="opacity:.65">· ${synced}</span>`);
+      } else if (blinn.matched) {
+        status = `<b>Blinn:</b> no registered classes with meeting times for ${esc(want)} <span style="opacity:.65">· ${synced}</span>`;
+      } else if (blinn.otherTerms.length) {
+        status = `<span class="bsx-warn">⚠ <b>Term mismatch:</b> you've synced Blinn <b>${esc(blinn.otherTerms.join(', '))}</b>, but this is <b>${esc(want)}</b>.</span>
+          Open ${blinnLink('Blinn → Register for Classes')} and pick ${esc(want)} to sync it.`;
+      } else {
+        status = `<b>Blinn:</b> nothing synced yet. Open ${blinnLink('Blinn → Register for Classes')} and pick ${esc(want)} to show your Blinn classes here.`;
+      }
       const pvs = previews.map(p => `<span class="bsx-pv">Previewing <b>${esc(p.label)}</b><button type="button" data-rm="${esc(p.course)}" aria-label="Stop previewing ${esc(p.label)}" title="Back to your cart's section">×</button></span>`).join(' ');
       const st = bar.querySelector('.bsx-status'), pv = bar.querySelector('.bsx-pvs');
       if (st.dataset.v !== status) { st.innerHTML = status; st.dataset.v = status; }
@@ -317,7 +362,8 @@
       ensureStyle();
       const blinn = blinnFor(term);
       const previews = previewsFor(term);
-      ensureBar(cal, term, blinn, previews);
+      const week = selectedWeek(cal);
+      ensureBar(cal, term, blinn, previews, week);
 
       const nativeChips = [...cal.querySelectorAll('[class*="chipCss"]')].filter(ch => !ch.classList.contains(CHIP));
       const nativeFor = course => nativeChips.filter(ch => ch.querySelector(`button[aria-label*="for ${CSS.escape(course)} on"]`));
@@ -333,16 +379,16 @@
       const ppm = (starts[1].getBoundingClientRect().top - starts[0].getBoundingClientRect().top) / 60;
       const origin = labelMins(starts[0].textContent);
       const offset = starts[0].getBoundingClientRect().top - cols[0].getBoundingClientRect().top;
-      const sigOf = () => [JSON.stringify(items), dayNames.join(), ppm.toFixed(3), origin, offset.toFixed(1),
+      const sigOf = () => [JSON.stringify(items), week?.label, dayNames.join(), ppm.toFixed(3), origin, offset.toFixed(1),
         cols.map(c => c.querySelectorAll('.' + CHIP).length).join(), toHide.filter(n => !n.hasAttribute(HIDDEN)).length].join('|');
-      const expected = items.reduce((n, c) => n + c.days.filter(d => dayNames.includes(d)).length, 0);
+      const expected = items.reduce((n, c) => n + c.days.filter(d => dayNames.includes(d) && meetsOn(c, week, d)).length, 0);
       if (sigOf() === lastSig && cal.querySelectorAll('.' + CHIP).length === expected) return;
 
       clearChips();
       toHide.forEach(n => n.setAttribute(HIDDEN, ''));
       for (const c of items) for (const d of c.days) {
         const i = dayNames.indexOf(d);
-        if (i < 0) continue;
+        if (i < 0 || !meetsOn(c, week, d)) continue;
         cols[i].appendChild(chip(c, d, (mins(c.start) - origin) * ppm + offset, (mins(c.end) - mins(c.start)) * ppm));
       }
       lastSig = sigOf();
