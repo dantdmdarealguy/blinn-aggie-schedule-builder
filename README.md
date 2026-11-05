@@ -56,6 +56,17 @@ Linked/Cross-listed sections.
 - TAMU sections in your cart aren't covered here; the [AggieSB+](https://chromewebstore.google.com/search/AggieSB%2B)
   extension already shows professor ratings for those.
 
+### Grade distributions
+
+Opening the ⓘ on a **previewed TAMU section** shows that instructor's past grades in the course, from
+[anex.us](https://anex.us/grades/) (built from TAMU's public grade reports):
+
+- GPA and how it compares with the course average across all instructors
+- an A–F bar with Q-drop rate, and the most recent terms (sections, students, GPA, A%, D/F%)
+
+It's fetched only when you open a dialog (one request per course, cached for 7 days). anex.us only covers Texas A&M, so
+Blinn classes don't have grade data.
+
 ### Terms and weeks
 
 - Terms are matched by season and year: Blinn "Spring 2027" ↔ TAMU "Spring 2027 - College Station". Blinn's

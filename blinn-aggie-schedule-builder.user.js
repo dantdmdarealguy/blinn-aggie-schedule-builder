@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blinn Classes on Aggie Schedule Builder
 // @namespace    https://github.com/dantdmdarealguy/blinn-aggie-schedule-builder
-// @version      2.3.0
+// @version      2.4.0
 // @description  Shows your registered Blinn College classes on TAMU's Aggie Schedule Builder calendar, styled like native sections, and lets you preview swapping a TAMU section.
 // @author       dantdmdarealguy
 // @license      MIT
@@ -16,6 +16,7 @@
 // @grant        GM_addValueChangeListener
 // @grant        GM_xmlhttpRequest
 // @connect      www.ratemyprofessors.com
+// @connect      anex.us
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -301,7 +302,15 @@
       .bsx-modal .bsx-rmp-link{font-size:11px;font-weight:600;margin-left:4px;white-space:nowrap}
       .bsx-modal .bsx-rmp-slot{display:block;margin:1px 0 3px}
       .bsx-modal .bsx-rmp-score{font-weight:bold}
-      .bsx-modal .bsx-rmp-meta{color:#6b6b6b;font-size:12px}`;
+      .bsx-modal .bsx-rmp-meta{color:#6b6b6b;font-size:12px}
+      .bsx-grades .gd-diff{font-size:12px;font-weight:600;margin-left:6px}
+      .bsx-grades .gd-bar{display:flex;height:14px;border-radius:3px;overflow:hidden;margin:6px 0 4px;max-width:520px;background:#eee}
+      .bsx-grades .gd-bar span{display:block;height:100%}
+      .bsx-grades .gd-legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;margin-bottom:6px}
+      .bsx-grades .gd-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:0}
+      .bsx-grades .gd-terms{margin-top:8px;font-size:12px;border-collapse:collapse}
+      .bsx-grades .gd-terms th{color:#6b6b6b;font-weight:600;text-align:left;padding:2px 14px 2px 0;border-bottom:1px solid #e5e5e5}
+      .bsx-grades .gd-terms td{padding:2px 14px 2px 0}`;
 
     function ensureStyle() {
       if (document.getElementById('bsx-style')) return;
@@ -492,6 +501,7 @@
           case 'fees': return renderFees(s);
           case 'description': return renderDescription(s);
           case 'bookstore': return renderBookstore(s);
+          case 'grades': return `<div class="bsx-sec bsx-grades" data-subj="${esc(s.subj)}" data-num="${esc(s.num)}" data-instr="${esc(s.instructor)}"><span class="muted">Loading grades from anex.us…</span></div>`;
           default: return `<div class="bsx-sec"><ul>${s.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>${(s.links || []).map(linkHtml).join(' · ')}</div>`;
         }
       } catch { return plain(s); }
@@ -529,7 +539,8 @@
         field('Campus', esc(i.campus || m0.campus)), field('Credits', esc(i.credits)),
         field('Section Attributes', i.attributes?.length ? esc(i.attributes.join(', ')) : null)];
       return { title: `${m0.subj} ${m0.num}`, subtitle: m0.title, tag: 'Preview · not in your cart', color: c.color,
-        left, meetings: p.meetings, linkRooms: true, more: [], note: '' };
+        left, meetings: p.meetings, linkRooms: true, note: '',
+        more: [{ key: 'grades', title: 'Grade distribution', open: true, subj: m0.subj, num: m0.num, instructor: m0.instructor }] };
     }
 
     let lastFocus = null;
@@ -564,7 +575,7 @@
           </div>
           ${model.note ? `<p style="padding-left:15px;opacity:.75">${esc(model.note)}</p>` : ''}
           ${model.more.length ? `<div class="bsx-m-more">${model.more.map(s =>
-            `<details><summary>${esc(s.title)}</summary>${renderSection(s)}</details>`).join('')}</div>` : ''}
+            `<details${s.open ? ' open' : ''}><summary>${esc(s.title)}</summary>${renderSection(s)}</details>`).join('')}</div>` : ''}
         </div></div></div>`;
       document.body.append(backdrop, m);
       document.body.classList.add('modal-open');
@@ -580,6 +591,7 @@
       });
       m.querySelector('.bsx-m-close').focus();
       fillRmpSlots(m);
+      fillGrades(m);
     }
 
     const rgb = color => (/^rgb/.test(color) ? color : `rgb(${color})`);
@@ -606,15 +618,16 @@
       : `https://www.ratemyprofessors.com/search/professors/${RMP.searchSchool[kind]}?q=${encodeURIComponent(Object.values(splitName(name)).join(' ').trim())}`;
     const ratingColor = r => (r >= 4 ? '#1b7f3b' : r >= 3 ? '#a66a00' : '#b00020');
 
-    function gmPost(body) {
+    function gmRequest({ url, data, headers, timeout = 15000 }) {
       return new Promise((resolve, reject) => {
         if (typeof GM_xmlhttpRequest !== 'function') return reject(new Error('GM_xmlhttpRequest unavailable'));
-        GM_xmlhttpRequest({ method: 'POST', url: RMP.endpoint, data: JSON.stringify(body), timeout: 15000,
-          headers: { 'Content-Type': 'application/json', Authorization: 'Basic dGVzdDp0ZXN0' }, // the public token RMP's own site uses
-          onload: r => { try { resolve(JSON.parse(r.responseText)); } catch (e) { reject(e); } },
+        GM_xmlhttpRequest({ method: 'POST', url, data, headers, timeout,
+          onload: r => (r.status && r.status >= 400 ? reject(new Error(`HTTP ${r.status}`)) : resolve(r.responseText)),
           onerror: reject, ontimeout: () => reject(new Error('timeout')) });
       });
     }
+    const gmPost = async body => JSON.parse(await gmRequest({ url: RMP.endpoint, data: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json', Authorization: 'Basic dGVzdDp0ZXN0' } })); // the public token RMP's own site uses
     const rmpInflight = {}, rmpFailed = {};
     function rmpLookup(name, kind) {
       const hit = rmpCached(name, kind);
@@ -676,6 +689,76 @@
         }
       });
     }
+    // ---- Grade distributions (anex.us, built from TAMU's public grade reports) ----------------
+    // Fetched only when a preview's details dialog is opened; one request per course, cached 7 days.
+    // anex.us only covers TAMU, so Blinn classes have no grade data.
+    const ANEX = { url: 'https://anex.us/grades/getData/', TTL: 7 * 864e5 };
+    const GRADES = ['A', 'B', 'C', 'D', 'F', 'Q'];
+    const GRADE_COLORS = ['#2e7d32', '#7cb342', '#f9a825', '#fb8c00', '#e53935', '#9e9e9e'];
+    const anexInflight = {};
+    function anexLookup(subj, num) {
+      const key = `${subj} ${num}`;
+      const hit = getVal('anexCache', {})[key];
+      if (hit && Date.now() - hit.t < ANEX.TTL) return Promise.resolve(hit.rows);
+      return (anexInflight[key] ??= (async () => {
+        const text = await gmRequest({ url: ANEX.url, timeout: 12000, data: new URLSearchParams({ dept: subj, number: num }).toString(),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        let rows = [];
+        if (!/^\s*\{\s*"classes"\s*:\s*\]\s*\}\s*$/.test(text)) { // anex returns `{"classes":]}` for courses it has no data for
+          rows = (JSON.parse(text).classes || []).map(r => ({ p: r.prof, y: +r.year, s: r.semester, sec: r.section, g: GRADES.map(k => +r[k] || 0) }));
+        }
+        const cache = getVal('anexCache', {});
+        for (const k of Object.keys(cache)) if (Date.now() - cache[k].t > ANEX.TTL) delete cache[k]; // keep storage small
+        cache[key] = { t: Date.now(), rows };
+        setVal('anexCache', cache);
+        return rows;
+      })().finally(() => { delete anexInflight[key]; }));
+    }
+    // anex lists instructors as "RITCHEY P"; ours look like "Ritchey, Philip Carson".
+    const anexName = full => { const { first, last } = splitName(full); return `${last} ${first[0] || ''}`.toUpperCase().replace(/[^A-Z ]/g, '').trim(); };
+    const sumGrades = rows => rows.reduce((t, r) => { r.g.forEach((v, i) => { t[i] += v; }); return t; }, GRADES.map(() => 0));
+    function gradeStats(g) {
+      const n = g[0] + g[1] + g[2] + g[3] + g[4];
+      return n ? { n, q: g[5], gpa: (4 * g[0] + 3 * g[1] + 2 * g[2] + g[3]) / n, pct: g.slice(0, 5).map(v => (100 * v) / n), qpct: (100 * g[5]) / (n + g[5]) } : null;
+    }
+    const SEM_ORDER = { SPRING: 1, SUMMER: 2, FALL: 3 };
+    function gradesHtml(rows, subj, num, instructor) {
+      const course = `${subj} ${num}`;
+      const anexLink = `<a href="https://anex.us/grades/?dept=${encodeURIComponent(subj)}&number=${encodeURIComponent(num)}" target="_blank" rel="noopener noreferrer">anex.us ↗</a>`;
+      if (!rows.length) return `<span class="muted">anex.us has no past grades for ${esc(course)}.</span> ${anexLink}`;
+      const all = gradeStats(sumGrades(rows));
+      const names = instructorsOf(instructor).map(anexName);
+      const mine = rows.filter(r => names.some(n => r.p === n || r.p.startsWith(n + ' ')));
+      const s = gradeStats(sumGrades(mine));
+      const who = esc(instructorsOf(instructor).map(n => splitName(n).last).join(' / ') || 'This instructor');
+      const allLine = `<div class="muted">All ${esc(course)} instructors: GPA <b>${all.gpa.toFixed(2)}</b> · A ${all.pct[0].toFixed(0)}% · D/F ${(all.pct[3] + all.pct[4]).toFixed(0)}% · ${all.n.toLocaleString()} students</div>`;
+      if (!s) return `<div>No past grades for <b>${who}</b> in ${esc(course)}.</div>${allLine}<div class="note">Source: ${anexLink}</div>`;
+      const bar = s.pct.map((p, i) => p > 0 ? `<span style="width:${p}%;background:${GRADE_COLORS[i]}" title="${GRADES[i]} ${p.toFixed(1)}%"></span>` : '').join('');
+      const legend = GRADES.slice(0, 5).map((k, i) => `<span><i style="background:${GRADE_COLORS[i]}"></i>${k} ${s.pct[i].toFixed(0)}%</span>`).join('')
+        + `<span><i style="background:${GRADE_COLORS[5]}"></i>Q-drop ${s.qpct.toFixed(0)}%</span>`;
+      const diff = s.gpa - all.gpa;
+      const terms = {};
+      for (const r of mine) (terms[`${r.y} ${r.s}`] ??= []).push(r);
+      const termRows = Object.entries(terms)
+        .sort(([a], [b]) => { const [ya, sa] = a.split(' '), [yb, sb] = b.split(' '); return yb - ya || SEM_ORDER[sb] - SEM_ORDER[sa]; })
+        .slice(0, 6).map(([term, rs]) => { const t = gradeStats(sumGrades(rs)); return t ? `<tr><td>${esc(term.replace(/^(\d+) (\w)(\w+)$/, (m, y, a, b) => `${a}${b.toLowerCase()} ${y}`))}</td><td>${rs.length}</td><td>${t.n}</td><td><b>${t.gpa.toFixed(2)}</b></td><td>${t.pct[0].toFixed(0)}%</td><td>${(t.pct[3] + t.pct[4]).toFixed(0)}%</td></tr>` : ''; }).join('');
+      return `<div><b>${who}</b> in ${esc(course)}: GPA <b>${s.gpa.toFixed(2)}</b>
+          <span class="gd-diff" style="color:${Math.abs(diff) < 0.1 ? '#6b6b6b' : diff > 0 ? '#1b7f3b' : '#b00020'}">${diff >= 0 ? '+' : '−'}${Math.abs(diff).toFixed(2)} vs. course</span>
+          <span class="muted">· ${s.n.toLocaleString()} students</span></div>
+        <div class="gd-bar" role="img" aria-label="${esc(GRADES.slice(0, 5).map((k, i) => `${k} ${s.pct[i].toFixed(0)}%`).join(', '))}">${bar}</div>
+        <div class="gd-legend">${legend}</div>
+        ${allLine}
+        ${termRows ? `<table class="gd-terms"><thead><tr><th>Term</th><th>Sections</th><th>Students</th><th>GPA</th><th>A</th><th>D/F</th></tr></thead><tbody>${termRows}</tbody></table>` : ''}
+        <div class="note">Source: ${anexLink} (TAMU grade reports; all of this instructor's sections, including honors)</div>`;
+    }
+    function fillGrades(root) {
+      root.querySelectorAll('.bsx-grades').forEach(async el => {
+        const { subj, num, instr } = el.dataset;
+        try { el.innerHTML = gradesHtml(await anexLookup(subj, num), subj, num, instr); }
+        catch { el.innerHTML = `<span class="muted">anex.us isn't responding right now. Try again later, or open <a href="https://anex.us/grades/?dept=${encodeURIComponent(subj)}&number=${encodeURIComponent(num)}" target="_blank" rel="noopener noreferrer">anex.us ↗</a>.</span>`; }
+      });
+    }
+
     // Small "★ 4.2" for calendar blocks, from cache only (render() requests missing ones in the background).
     function chipRating(c) {
       if (!rmpOn()) return '';
