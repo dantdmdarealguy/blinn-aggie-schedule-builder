@@ -26,10 +26,19 @@ Tampermonkey checks this repo for updates on its own.
    you submit changes while that page is open, it re-syncs automatically.
 2. **Open Aggie Schedule Builder** for the same term (for example *Spring 2027 - College Station*) and go to your Shopping Cart.
    Your Blinn classes appear on the calendar, and a bar above the calendar shows what was synced and when.
-3. **Preview a section:** in the bar, type `SUBJ COURSE SECTION` (e.g. `CSCE 120 519`) and press **Preview**. The section in
-   your cart is hidden and the one you typed is drawn in its place. Click **×** on the "Previewing" pill to go back.
+3. **Preview sections:** in the bar, type one or more sections and press **Preview**. For example:
+   - `CSCE 120 519`
+   - `CSCE 120 515 516, 519` (several sections of one course; a bare number reuses the course before it)
+   - `CSCE 120 519; MATH 151 501` (different courses)
 
-Click the ⓘ on any added block for its CRN, meeting type, room, campus, instructor, and dates.
+   The section in your cart is hidden and the previewed ones are drawn instead, each with its own color dot in the bar.
+   Blocks that overlap in time sit side by side, which makes conflicts easy to spot. Click **×** on a pill to remove one, or
+   **Clear all**.
+
+Click the ⓘ on any added block to open the same details dialog Aggie Schedule Builder uses. For Blinn classes it shows
+everything from Blinn's *Class Details* window (term, CRN, campus, schedule type, instructional method, credit hours,
+enrollment, attributes), plus expandable Course Description, Prerequisites, Corequisites, Restrictions, Fees, Bookstore, and
+Linked/Cross-listed sections.
 
 ### Terms and weeks
 
