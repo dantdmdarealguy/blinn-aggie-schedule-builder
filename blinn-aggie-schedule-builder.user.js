@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blinn Classes on Aggie Schedule Builder
 // @namespace    https://github.com/dantdmdarealguy/blinn-aggie-schedule-builder
-// @version      2.2.1
+// @version      2.2.2
 // @description  Shows your registered Blinn College classes on TAMU's Aggie Schedule Builder calendar, styled like native sections, and lets you preview swapping a TAMU section.
 // @author       dantdmdarealguy
 // @license      MIT
@@ -277,9 +277,23 @@
       .bsx-modal .bsx-m-meetings > div{margin-bottom:6px}
       .bsx-modal .bsx-m-dates{padding-bottom:4px}
       .bsx-modal .bsx-m-more{border-top:1px solid #e5e5e5;padding:10px 15px 0}
-      .bsx-modal details{border-bottom:1px solid #eee;padding:6px 0}
-      .bsx-modal summary{cursor:pointer;font-weight:bold;color:#333}
-      .bsx-modal details > div{padding:6px 0 2px 16px;white-space:pre-line;color:#333}`;
+      .bsx-modal details{border-bottom:1px solid #eee;padding:7px 0}
+      .bsx-modal summary{cursor:pointer;font-weight:bold;color:#333;font-size:14px}
+      .bsx-sec{padding:6px 0 2px 18px;font-size:13px;line-height:1.5;color:#333}
+      .bsx-sec p{margin:0 0 6px}
+      .bsx-sec ul{margin:2px 0 6px;padding-left:18px}
+      .bsx-sec li{margin:3px 0}
+      .bsx-sec h5{margin:8px 0 2px;font-size:12px;font-weight:bold;color:#555}
+      .bsx-sec h5:first-child{margin-top:0}
+      .bsx-sec .muted{color:#6b6b6b}
+      .bsx-sec .meta{color:#6b6b6b;font-size:12px;margin-bottom:4px}
+      .bsx-sec .note{color:#6b6b6b;font-size:12px;font-style:italic;margin-top:6px}
+      .bsx-sec .bsx-lead{margin-bottom:2px}
+      .bsx-sec .plus{color:#888;font-size:12px;font-style:italic;margin:0 6px}
+      .bsx-sec .grade{display:inline-block;margin-left:8px;padding:0 7px;border-radius:9px;background:#eef2f7;color:#2f4a6b;
+        font-size:11px;font-weight:600;line-height:18px;vertical-align:1px;cursor:help}
+      .bsx-sec .fee{display:flex;justify-content:space-between;max-width:360px}
+      .bsx-sec .txt{white-space:pre-line}`;
 
     function ensureStyle() {
       if (document.getElementById('bsx-style')) return;
@@ -378,6 +392,103 @@
         ${m.dates ? `<div class="bsx-m-dates">Dates: <span>${esc(m.dates)}</span></div>` : ''}</div>`;
     };
 
+    // ---- readable rendering of Blinn's "Class Details" tabs ------------------------------
+    const linkHtml = l => `<a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer">${esc(l.text)}</a>`;
+    const plain = s => `<div class="bsx-sec"><div class="txt">${esc(s.lines.filter(l => !(s.links || []).some(k => k.text === l)).join('\n'))}</div>${
+      (s.links || []).map(linkHtml).join('<br>')}</div>`;
+
+    // "MATH - Mathematics 2412 to 2415" → "MATH 2412–2415"
+    const cleanCourse = s => { const m = s.match(/^([A-Z]{2,5}) - .*? (\d{3,4}[A-Z]?(?: to \d{3,4}[A-Z]?)?)$/); return m ? `${m[1]} ${m[2].replace(' to ', '–')}` : s; };
+
+    // Banner lists every accepted grade variant (C, TC, CR, TCR, P, TP…) as a separate "( … ) or" group.
+    // Parse into options (AND-lists of courses), merge options that differ only by grade, and pull out test scores.
+    function parsePrereqs(lines) {
+      const options = [], tests = [];
+      let cur = null, req = null, depth = 0, noConcurrent = false;
+      const newOption = () => { cur = { reqs: [] }; options.push(cur); };
+      for (const l of lines) {
+        let m;
+        if (/^Area Prerequisites$/i.test(l) || /^Prerequisites?:/i.test(l)) continue;
+        if (l === '(') { depth++; newOption(); req = null; continue; }
+        if (l === ')') { depth = Math.max(0, depth - 1); req = null; if (!depth) cur = null; continue; }
+        if (/^or$/i.test(l)) { if (depth) return null; cur = null; req = null; continue; }
+        if (/^and$/i.test(l)) { req = null; continue; }
+        if ((m = l.match(/^Course or Test:\s*(.+)$/i))) { if (!cur) newOption(); req = { what: cleanCourse(m[1]), grade: '' }; cur.reqs.push(req); continue; }
+        if ((m = l.match(/^Minimum Grade of\s+(\S+)/i))) { if (req) req.grade = m[1]; continue; }
+        if (/^May not be taken concurrently\.?$/i.test(l)) { noConcurrent = true; continue; }
+        if ((m = l.match(/^(.+?)\s+(\d+)\s+to\s+(\d+)$/))) { tests.push(`${m[1]} ${m[2]}–${m[3]}`); continue; }
+        return null; // unfamiliar layout → caller falls back to plain text
+      }
+      const merged = new Map();
+      for (const o of options) {
+        if (!o.reqs.length) continue;
+        const key = o.reqs.map(r => r.what).join(' + ');
+        const e = merged.get(key) || { reqs: o.reqs.map(r => r.what), grades: [] };
+        for (const r of o.reqs) if (r.grade && !e.grades.includes(r.grade)) e.grades.push(r.grade);
+        merged.set(key, e);
+      }
+      return { options: [...merged.values()], tests, noConcurrent };
+    }
+
+    function renderPrereqs(s) {
+      const p = parsePrereqs(s.lines);
+      if (!p || (!p.options.length && !p.tests.length)) return plain(s);
+      const items = p.options.map(o => {
+        const main = o.grades.find(g => /^[A-D]$/.test(g)) || o.grades[0];
+        const grade = main ? `<span class="grade" title="Accepted grades: ${esc(o.grades.join(', '))}">${esc(main)}${/^[A-D]$/.test(main) ? ' or better' : ''}</span>` : '';
+        return `<li>${o.reqs.map(r => `<b>${esc(r)}</b>`).join('<span class="plus">and</span>')}${grade}</li>`;
+      });
+      if (p.tests.length) items.push(`<li>Placement score <span class="muted">— ${p.tests.map(esc).join(' · ')}</span></li>`);
+      const notes = [
+        p.options.some(o => o.grades.length > 1) && 'Transfer (T…), credit (CR) and pass (P) equivalents also count. Hover a grade to see all of them.',
+        p.noConcurrent && "Prerequisites have to be finished first — they can't be taken at the same time as this course.",
+      ].filter(Boolean);
+      return `<div class="bsx-sec"><div class="bsx-lead">${items.length > 1 ? 'Any <b>one</b> of:' : 'Requires:'}</div><ul>${items.join('')}</ul>${
+        notes.map(n => `<div class="note">${esc(n)}</div>`).join('')}</div>`;
+    }
+
+    function renderRestrictions(s) {
+      let html = '', open = false;
+      const notes = [];
+      for (const l of s.lines) {
+        if (/^Not all restrictions are applicable/i.test(l)) { notes.push(l); continue; }
+        if (/:$/.test(l)) { html += (open ? '</ul>' : '') + `<h5>${esc(l.slice(0, -1))}</h5><ul>`; open = true; continue; }
+        if (!open) { html += '<ul>'; open = true; }
+        html += `<li>${esc(l)}</li>`;
+      }
+      return `<div class="bsx-sec">${html}${open ? '</ul>' : ''}${notes.map(n => `<div class="note">${esc(n)}</div>`).join('')}</div>`;
+    }
+
+    function renderFees(s) {
+      const rows = s.lines.map(l => l.split(' | ')).filter(r => r.length > 1 && !/^(Level|Description)$/i.test(r[0]));
+      if (!rows.length) return plain(s);
+      return `<div class="bsx-sec">${rows.map(r => `<div class="fee"><span>${esc(r.slice(0, -1).join(' · '))}</span><b>${esc(r[r.length - 1])}</b></div>`).join('')}</div>`;
+    }
+
+    function renderDescription(s) {
+      const text = s.lines.join(' ');
+      const m = text.match(/^(.*?Credit:\s*\d+\s*semester hours?\.)\s*(.*)$/i);
+      return `<div class="bsx-sec">${m ? `<div class="meta">${esc(m[1])}</div><p>${esc(m[2])}</p>` : `<p>${esc(text)}</p>`}</div>`;
+    }
+
+    function renderBookstore(s) {
+      const text = s.lines.filter(l => !(s.links || []).some(k => k.text === l));
+      return `<div class="bsx-sec">${text.map(t => `<div class="meta">${esc(t)}</div>`).join('')}${(s.links || []).map(linkHtml).join(' · ')}</div>`;
+    }
+
+    function renderSection(s) {
+      try {
+        switch (s.key) {
+          case 'prerequisites': return renderPrereqs(s);
+          case 'restrictions': return renderRestrictions(s);
+          case 'fees': return renderFees(s);
+          case 'description': return renderDescription(s);
+          case 'bookstore': return renderBookstore(s);
+          default: return `<div class="bsx-sec"><ul>${s.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>${(s.links || []).map(linkHtml).join(' · ')}</div>`;
+        }
+      } catch { return plain(s); }
+    }
+
     function blinnModel(c) {
       const t = getVal(STORE, {})[c.termCode] || {};
       const d = t.details?.[c.crn] || {};
@@ -393,7 +504,7 @@
       for (const [k, v] of kv(d.enrollment)) if (k) left.push(field(k, esc(v)));
       if (d.attributes) left.push(field('Section Attributes', esc(d.attributes.lines.join(', '))));
       const more = ['description', 'prerequisites', 'corequisites', 'restrictions', 'fees', 'bookstore', 'linked', 'crossList']
-        .map(k => d[k]).filter(Boolean);
+        .filter(k => d[k]).map(k => ({ ...d[k], key: k }));
       return { title: `${c.subj} ${c.num}`, subtitle: c.title, tag: 'Blinn College · Registered', color: c.color,
         left, meetings, linkRooms: false, more,
         note: d.classDetails ? '' : 'Re-open Blinn → Register for Classes to load the full class details.' };
@@ -444,8 +555,8 @@
               <div class="bsx-m-meetings">${model.meetings.map(x => meetingHtml(x, model.linkRooms)).join('')}</div></li></ul></div>
           </div>
           ${model.note ? `<p style="padding-left:15px;opacity:.75">${esc(model.note)}</p>` : ''}
-          ${model.more.length ? `<div class="bsx-m-more">${model.more.map(s => `<details><summary>${esc(s.title)}</summary><div>${
-            esc(s.lines.filter(l => !(s.links || []).some(k => k.text === l)).join('\n'))}${(s.links || []).map(l => `<br><a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer">${esc(l.text)}</a>`).join('')}</div></details>`).join('')}</div>` : ''}
+          ${model.more.length ? `<div class="bsx-m-more">${model.more.map(s =>
+            `<details><summary>${esc(s.title)}</summary>${renderSection(s)}</details>`).join('')}</div>` : ''}
         </div></div></div>`;
       document.body.append(backdrop, m);
       document.body.classList.add('modal-open');
