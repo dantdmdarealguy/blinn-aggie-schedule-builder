@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blinn Classes on Aggie Schedule Builder
 // @namespace    https://github.com/dantdmdarealguy/blinn-aggie-schedule-builder
-// @version      2.2.2
+// @version      2.3.0
 // @description  Shows your registered Blinn College classes on TAMU's Aggie Schedule Builder calendar, styled like native sections, and lets you preview swapping a TAMU section.
 // @author       dantdmdarealguy
 // @license      MIT
@@ -14,6 +14,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addValueChangeListener
+// @grant        GM_xmlhttpRequest
+// @connect      www.ratemyprofessors.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -293,7 +295,13 @@
       .bsx-sec .grade{display:inline-block;margin-left:8px;padding:0 7px;border-radius:9px;background:#eef2f7;color:#2f4a6b;
         font-size:11px;font-weight:600;line-height:18px;vertical-align:1px;cursor:help}
       .bsx-sec .fee{display:flex;justify-content:space-between;max-width:360px}
-      .bsx-sec .txt{white-space:pre-line}`;
+      .bsx-sec .txt{white-space:pre-line}
+      .${BAR} .bsx-rmp-toggle{display:inline-flex;align-items:center;gap:4px;margin:0;font-weight:normal;cursor:pointer}
+      .${BAR} .bsx-rmp-toggle input{width:auto;margin:0}
+      .bsx-modal .bsx-rmp-link{font-size:11px;font-weight:600;margin-left:4px;white-space:nowrap}
+      .bsx-modal .bsx-rmp-slot{display:block;margin:1px 0 3px}
+      .bsx-modal .bsx-rmp-score{font-weight:bold}
+      .bsx-modal .bsx-rmp-meta{color:#6b6b6b;font-size:12px}`;
 
     function ensureStyle() {
       if (document.getElementById('bsx-style')) return;
@@ -500,7 +508,7 @@
       } else {
         left.push(field('Title', esc(c.title)), field('CRN', esc(c.crn)), field('Subject', esc(c.subj)), field('Course Number', esc(c.num)));
       }
-      left.push(field('Instructor', esc([...new Set(meetings.map(m => m.instructor))].join('; '))));
+      left.push(field('Instructor', instructorHtml([...new Set(meetings.map(m => m.instructor))].join('; '), 'blinn')));
       for (const [k, v] of kv(d.enrollment)) if (k) left.push(field(k, esc(v)));
       if (d.attributes) left.push(field('Section Attributes', esc(d.attributes.lines.join(', '))));
       const more = ['description', 'prerequisites', 'corequisites', 'restrictions', 'fees', 'bookstore', 'linked', 'crossList']
@@ -517,7 +525,7 @@
       const seats = p.open != null ? `${p.open}${i.capacity ? ` of ${esc(i.capacity)}` : ''}` : null;
       const left = [field('Title', esc(m0.title)), field('CRN #', esc(m0.crn)), field('Section', esc(c.section)), field('Subject', esc(m0.subj)),
         field('Course', esc(m0.num)), field('Seats Open', seats), field('Waitlist', i.waitlist && i.waitlist !== '0' ? esc(i.waitlist) : null),
-        field('Component', esc(i.component)), field('Instruction Mode', esc(i.mode)), field('Instructor', esc(m0.instructor)),
+        field('Component', esc(i.component)), field('Instruction Mode', esc(i.mode)), field('Instructor', instructorHtml(m0.instructor, 'tamu')),
         field('Campus', esc(i.campus || m0.campus)), field('Credits', esc(i.credits)),
         field('Section Attributes', i.attributes?.length ? esc(i.attributes.join(', ')) : null)];
       return { title: `${m0.subj} ${m0.num}`, subtitle: m0.title, tag: 'Preview · not in your cart', color: c.color,
@@ -571,9 +579,110 @@
         }
       });
       m.querySelector('.bsx-m-close').focus();
+      fillRmpSlots(m);
     }
 
     const rgb = color => (/^rgb/.test(color) ? color : `rgb(${color})`);
+
+    // ---- Rate My Professors ------------------------------------------------------------
+    // Links always work (plain search/profile URLs). Inline scores are opt-in (toolbar checkbox): RMP has no
+    // public API, so they come from the GraphQL endpoint its own website uses and may break if RMP changes it.
+    const RMP = {
+      endpoint: 'https://www.ratemyprofessors.com/graphql',
+      schools: { // RMP school ids. Blinn is split across several campus entries.
+        tamu: ['U2Nob29sLTEwMDM='],                                                          // Texas A&M (1003)
+        blinn: ['U2Nob29sLTQyNzU=', 'U2Nob29sLTE3Mzk=', 'U2Nob29sLTEzNTk3', 'U2Nob29sLTQ3MTk='], // 4275, 1739, 13597, 4719
+      },
+      searchSchool: { tamu: 1003, blinn: 4275 },
+      TTL: 7 * 864e5,
+      QUERY: 'query($t:String!,$s:ID){newSearch{teachers(query:{text:$t,schoolID:$s},first:10){edges{node{legacyId firstName lastName department avgRating avgDifficulty numRatings wouldTakeAgainPercent}}}}}',
+    };
+    const rmpOn = () => !!getVal('rmpScores', false);
+    const splitName = full => { const [last = '', rest = ''] = String(full).split(',').map(s => s.trim()); return { first: rest.split(/\s+/)[0] || '', last }; };
+    const instructorsOf = s => String(s || '').split(/\s*;\s*/).filter(n => n && n !== 'TBA');
+    const rmpKey = (name, kind) => `${kind}:${name.toLowerCase()}`;
+    const rmpCached = (name, kind) => { const e = getVal('rmpCache', {})[rmpKey(name, kind)]; return e && Date.now() - e.t < RMP.TTL ? e : null; };
+    const rmpUrl = (name, kind, data) => data?.id ? `https://www.ratemyprofessors.com/professor/${encodeURIComponent(data.id)}`
+      : `https://www.ratemyprofessors.com/search/professors/${RMP.searchSchool[kind]}?q=${encodeURIComponent(Object.values(splitName(name)).join(' ').trim())}`;
+    const ratingColor = r => (r >= 4 ? '#1b7f3b' : r >= 3 ? '#a66a00' : '#b00020');
+
+    function gmPost(body) {
+      return new Promise((resolve, reject) => {
+        if (typeof GM_xmlhttpRequest !== 'function') return reject(new Error('GM_xmlhttpRequest unavailable'));
+        GM_xmlhttpRequest({ method: 'POST', url: RMP.endpoint, data: JSON.stringify(body), timeout: 15000,
+          headers: { 'Content-Type': 'application/json', Authorization: 'Basic dGVzdDp0ZXN0' }, // the public token RMP's own site uses
+          onload: r => { try { resolve(JSON.parse(r.responseText)); } catch (e) { reject(e); } },
+          onerror: reject, ontimeout: () => reject(new Error('timeout')) });
+      });
+    }
+    const rmpInflight = {}, rmpFailed = {};
+    function rmpLookup(name, kind) {
+      const hit = rmpCached(name, kind);
+      if (hit) return Promise.resolve(hit.data);
+      const key = rmpKey(name, kind);
+      return (rmpInflight[key] ??= (async () => {
+        const { first, last } = splitName(name);
+        const norm = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+        // Search every campus entry: the same instructor can be listed under several (e.g. "Cicily" at Blinn Brenham
+        // with most ratings and "Cindy" at Blinn College). Prefer an exact first-name match, then the most ratings.
+        const matches = [];
+        for (const sid of RMP.schools[kind] || []) {
+          const j = await gmPost({ query: RMP.QUERY, variables: { t: `${first} ${last}`.trim(), s: sid } });
+          for (const n of (j?.data?.newSearch?.teachers?.edges || []).map(e => e.node)) {
+            if (norm(n.lastName) !== norm(last) || (first && norm(n.firstName)[0] !== norm(first)[0])) continue;
+            if (!matches.some(x => x.legacyId === n.legacyId)) matches.push({ ...n, score: (norm(n.firstName) === norm(first) ? 1e6 : 0) + (n.numRatings || 0) });
+          }
+        }
+        matches.sort((a, b) => b.score - a.score);
+        const [best, ...rest] = matches;
+        const data = best ? { id: best.legacyId, rating: best.avgRating, difficulty: best.avgDifficulty, count: best.numRatings,
+          wta: best.wouldTakeAgainPercent, dept: best.department,
+          others: rest.filter(n => n.numRatings > 0).map(n => ({ id: n.legacyId, name: `${n.firstName} ${n.lastName}`, rating: n.avgRating, count: n.numRatings })) } : null;
+        const cache = getVal('rmpCache', {});
+        cache[key] = { t: Date.now(), data };
+        setVal('rmpCache', cache);
+        return data;
+      })().finally(() => { delete rmpInflight[key]; }));
+    }
+
+    function rmpScoreHtml(name, kind, d) {
+      if (!d) return `<span class="bsx-rmp-meta">No Rate My Professors profile found</span>`;
+      if (!d.count) return `<span class="bsx-rmp-meta">On Rate My Professors, no ratings yet</span>`;
+      return `<a class="bsx-rmp-score" href="${esc(rmpUrl(name, kind, d))}" target="_blank" rel="noopener noreferrer" style="color:${ratingColor(d.rating)}">★ ${d.rating.toFixed(1)}</a>`
+        + `<span class="bsx-rmp-meta"> · difficulty ${d.difficulty.toFixed(1)}${d.wta >= 0 ? ` · ${Math.round(d.wta)}% would take again` : ''} · ${d.count} rating${d.count === 1 ? '' : 's'}</span>`
+        + (d.others?.length ? `<div class="bsx-rmp-meta">Also listed as ${d.others.map(o =>
+          `<a href="https://www.ratemyprofessors.com/professor/${encodeURIComponent(o.id)}" target="_blank" rel="noopener noreferrer">${esc(o.name)}</a> (★ ${Number(o.rating).toFixed(1)}, ${o.count})`).join(', ')}</div>` : '');
+    }
+    // Instructor field for the details dialog: name + RMP link, plus a score slot filled in after opening.
+    function instructorHtml(names, kind) {
+      const list = instructorsOf(names);
+      if (!list.length) return esc(names || 'TBA');
+      return list.map(n => {
+        const d = rmpCached(n, kind)?.data;
+        return `<span class="bsx-instr">${esc(n)} <a class="bsx-rmp-link" href="${esc(rmpUrl(n, kind, d))}" target="_blank" rel="noopener noreferrer" title="Open on Rate My Professors">RMP ↗</a>`
+          + (rmpOn() ? `<span class="bsx-rmp-slot" data-name="${esc(n)}" data-kind="${kind}"> <span class="bsx-rmp-meta">Loading rating…</span></span>` : '') + '</span>';
+      }).join('; ');
+    }
+    function fillRmpSlots(root) {
+      root.querySelectorAll('.bsx-rmp-slot').forEach(async slot => {
+        const { name, kind } = slot.dataset;
+        try {
+          const d = await rmpLookup(name, kind);
+          slot.innerHTML = rmpScoreHtml(name, kind, d);
+          const link = slot.parentElement.querySelector('.bsx-rmp-link');
+          if (link) link.href = rmpUrl(name, kind, d);
+        } catch {
+          slot.innerHTML = '<span class="bsx-rmp-meta">Couldn\'t reach Rate My Professors</span>';
+        }
+      });
+    }
+    // Small "★ 4.2" for calendar blocks, from cache only (render() requests missing ones in the background).
+    function chipRating(c) {
+      if (!rmpOn()) return '';
+      const list = instructorsOf(c.instructor);
+      const d = list.length === 1 ? rmpCached(list[0], c.kind === 'preview' ? 'tamu' : 'blinn')?.data : null;
+      return d?.count ? ` <span style="color:${ratingColor(d.rating)}">★${d.rating.toFixed(1)}</span>` : '';
+    }
 
     function chip(c, day, top, height, lane = 0, lanes = 1) {
       const el = document.createElement('div');
@@ -586,7 +695,7 @@
       el.innerHTML = `<div class="b-bg"><div class="b-wrap"></div>
         <div class="b-detail">
           <button type="button" class="b-info" aria-label="${esc(label)}" title="${esc(label)}"><span aria-hidden="true" class="fa fa-info-circle"></span></button>
-          <div class="b-full"><div aria-hidden="true">${esc(c.subj)}-${esc(c.num)} ${esc(c.room)}</div><div>${c.section ? `<b>${esc(c.section)}</b> · ` : ''}${esc(c.instructor)}</div></div>
+          <div class="b-full"><div aria-hidden="true">${esc(c.subj)}-${esc(c.num)} ${esc(c.room)}</div><div>${c.section ? `<b>${esc(c.section)}</b> · ` : ''}${esc(c.instructor)}${chipRating(c)}</div></div>
           <div class="b-compact" aria-hidden="true"><div>${esc(c.subj)}</div><div>${esc(c.num)}</div><div><b>${esc(c.section || c.room.split(' ')[0])}</b></div></div>
         </div></div>`;
       el.querySelector('.b-info').addEventListener('click', e => {
@@ -607,7 +716,10 @@
         bar.className = BAR;
         bar.innerHTML = `<span class="bsx-status"></span><span class="bsx-pvs"></span>
           <form><input aria-label="Preview sections, e.g. CSCE 120 515, 519" placeholder="Preview: CSCE 120 515, 519"><button type="submit">Preview</button></form>
+          <label class="bsx-rmp-toggle" title="Show Rate My Professors scores for Blinn and previewed instructors (fetched from ratemyprofessors.com, cached 7 days)">
+            <input type="checkbox"> RMP scores</label>
           <span class="bsx-err" role="alert"></span>`;
+        bar.querySelector('.bsx-rmp-toggle input').addEventListener('change', e => { setVal('rmpScores', e.target.checked); schedule(); });
         bar.querySelector('form').addEventListener('submit', async e => {
           e.preventDefault();
           const input = bar.querySelector('input'), err = bar.querySelector('.bsx-err');
@@ -621,6 +733,8 @@
         });
         cal.parentElement.insertBefore(bar, cal);
       }
+      const rmpBox = bar.querySelector('.bsx-rmp-toggle input');
+      if (rmpBox.checked !== rmpOn()) rmpBox.checked = rmpOn();
       const want = prettyTerm(seasonKey(term)) || term;
       const blinnLink = text => `<a href="https://ban9reg.blinn.edu/StudentRegistrationSsb/ssb/registration" target="_blank" rel="noopener">${text}</a>`;
       const courses = [...new Set(blinn.classes.map(c => `${c.subj} ${c.num}`))].map(name => {
@@ -694,10 +808,20 @@
       const items = [...blinn.classes, ...previewItems];
       ensureBar(cal, term, blinn, previews, week, previewColors);
 
+      // RMP scores (opt-in): request any instructor not cached yet; blocks redraw once results arrive.
+      const people = rmpOn() ? [...new Map(items.flatMap(c => instructorsOf(c.instructor)
+        .map(n => [rmpKey(n, c.kind === 'preview' ? 'tamu' : 'blinn'), [n, c.kind === 'preview' ? 'tamu' : 'blinn']]))).values()] : [];
+      for (const [n, kind] of people) {
+        const k = rmpKey(n, kind);
+        if (rmpCached(n, kind) || Date.now() - (rmpFailed[k] || 0) < 6e5) continue; // back off 10 min after a failure
+        rmpLookup(n, kind).then(schedule, () => { rmpFailed[k] = Date.now(); });
+      }
+      const rmpSig = people.map(([n, kind]) => rmpCached(n, kind)?.data?.rating ?? '-').join(',');
+
       const ppm = (starts[1].getBoundingClientRect().top - starts[0].getBoundingClientRect().top) / 60;
       const origin = labelMins(starts[0].textContent);
       const offset = starts[0].getBoundingClientRect().top - cols[0].getBoundingClientRect().top;
-      const sigOf = () => [JSON.stringify(items), week?.label, dayNames.join(), ppm.toFixed(3), origin, offset.toFixed(1),
+      const sigOf = () => [JSON.stringify(items), rmpOn(), rmpSig, week?.label, dayNames.join(), ppm.toFixed(3), origin, offset.toFixed(1),
         cols.map(c => c.querySelectorAll('.' + CHIP).length).join(), toHide.filter(n => !n.hasAttribute(HIDDEN)).length].join('|');
       const expected = items.reduce((n, c) => n + c.days.filter(d => dayNames.includes(d) && meetsOn(c, week, d)).length, 0);
       if (sigOf() === lastSig && cal.querySelectorAll('.' + CHIP).length === expected) return;
@@ -737,6 +861,7 @@
     addEventListener('popstate', schedule);
     onValChange(STORE, schedule);     // updates live when you sync in a Blinn tab
     onValChange(PREVIEWS, schedule);
+    onValChange('rmpScores', schedule);
     render();
   }
 })();

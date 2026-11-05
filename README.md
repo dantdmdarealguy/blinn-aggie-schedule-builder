@@ -40,6 +40,22 @@ everything from Blinn's *Class Details* window (term, CRN, campus, schedule type
 enrollment, attributes), plus expandable Course Description, Prerequisites, Corequisites, Restrictions, Fees, Bookstore, and
 Linked/Cross-listed sections.
 
+### Rate My Professors
+
+- Every instructor in the ⓘ details dialog has an **RMP ↗** link to their Rate My Professors page (or a search, if the
+  profile hasn't been looked up yet).
+- Tick **RMP scores** in the bar to also show rating, difficulty, "would take again" and number of ratings in the dialog, plus
+  a small ★ on each Blinn and previewed block. It's **off by default**.
+  - Blinn instructors are searched across all of Blinn's campus listings on RMP (an instructor is sometimes listed more than
+    once, e.g. under a nickname; the profile with the exact name and most ratings wins, and the others are linked as
+    "also listed as").
+  - Results are cached for 7 days. The first time, Tampermonkey asks permission for the script to contact
+    `www.ratemyprofessors.com`; choose *Always allow domain*.
+  - Rate My Professors has no public API, so scores come from the same endpoint its website uses. That's unofficial and
+    may stop working if RMP changes it; the links keep working regardless.
+- TAMU sections in your cart aren't covered here; the [AggieSB+](https://chromewebstore.google.com/search/AggieSB%2B)
+  extension already shows professor ratings for those.
+
 ### Terms and weeks
 
 - Terms are matched by season and year: Blinn "Spring 2027" ↔ TAMU "Spring 2027 - College Station". Blinn's
