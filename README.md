@@ -42,10 +42,10 @@ Linked/Cross-listed sections.
 
 ### Rate My Professors
 
-- Every instructor in the ⓘ details dialog has an **RMP ↗** link to their Rate My Professors page (or a search, if the
+- Every instructor in the ⓘ details dialog (Blinn, previewed and in-cart TAMU sections) has an **RMP ↗** link to their Rate My Professors page (or a search, if the
   profile hasn't been looked up yet).
 - Tick **RMP scores** in the bar to also show rating, difficulty, "would take again" and number of ratings in the dialog, plus
-  a small ★ on each Blinn and previewed block. It's **off by default**.
+  a small ★ on every block (Blinn, previewed and the classes in your cart). It's **off by default**.
   - Blinn instructors are searched across all of Blinn's campus listings on RMP (an instructor is sometimes listed more than
     once, e.g. under a nickname; the profile with the exact name and most ratings wins, and the others are linked as
     "also listed as").
@@ -53,12 +53,10 @@ Linked/Cross-listed sections.
     `www.ratemyprofessors.com`; choose *Always allow domain*.
   - Rate My Professors has no public API, so scores come from the same endpoint its website uses. That's unofficial and
     may stop working if RMP changes it; the links keep working regardless.
-- TAMU sections in your cart aren't covered here; the [AggieSB+](https://chromewebstore.google.com/search/AggieSB%2B)
-  extension already shows professor ratings for those.
 
 ### Grade distributions
 
-Opening the ⓘ on a **previewed TAMU section** shows that instructor's past grades in the course, from
+Opening the ⓘ on any TAMU section (classes in your cart, which use Aggie Schedule Builder's own dialog, and previewed sections) shows that instructor's past grades in the course, from
 [anex.us](https://anex.us/grades/) (built from TAMU's public grade reports):
 
 - GPA and how it compares with the course average across all instructors

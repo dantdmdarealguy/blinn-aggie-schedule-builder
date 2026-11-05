@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blinn Classes on Aggie Schedule Builder
 // @namespace    https://github.com/dantdmdarealguy/blinn-aggie-schedule-builder
-// @version      2.4.0
+// @version      2.5.0
 // @description  Shows your registered Blinn College classes on TAMU's Aggie Schedule Builder calendar, styled like native sections, and lets you preview swapping a TAMU section.
 // @author       dantdmdarealguy
 // @license      MIT
@@ -279,9 +279,9 @@
       .bsx-modal .bsx-m-meetings{padding-left:15px}
       .bsx-modal .bsx-m-meetings > div{margin-bottom:6px}
       .bsx-modal .bsx-m-dates{padding-bottom:4px}
-      .bsx-modal .bsx-m-more{border-top:1px solid #e5e5e5;padding:10px 15px 0}
-      .bsx-modal details{border-bottom:1px solid #eee;padding:7px 0}
-      .bsx-modal summary{cursor:pointer;font-weight:bold;color:#333;font-size:14px}
+      :is(.bsx-modal,.bsx-native) .bsx-m-more{border-top:1px solid #e5e5e5;padding:10px 15px 0}
+      :is(.bsx-modal,.bsx-native) details{border-bottom:1px solid #eee;padding:7px 0}
+      :is(.bsx-modal,.bsx-native) summary{cursor:pointer;font-weight:bold;color:#333;font-size:14px}
       .bsx-sec{padding:6px 0 2px 18px;font-size:13px;line-height:1.5;color:#333}
       .bsx-sec p{margin:0 0 6px}
       .bsx-sec ul{margin:2px 0 6px;padding-left:18px}
@@ -299,10 +299,10 @@
       .bsx-sec .txt{white-space:pre-line}
       .${BAR} .bsx-rmp-toggle{display:inline-flex;align-items:center;gap:4px;margin:0;font-weight:normal;cursor:pointer}
       .${BAR} .bsx-rmp-toggle input{width:auto;margin:0}
-      .bsx-modal .bsx-rmp-link{font-size:11px;font-weight:600;margin-left:4px;white-space:nowrap}
-      .bsx-modal .bsx-rmp-slot{display:block;margin:1px 0 3px}
-      .bsx-modal .bsx-rmp-score{font-weight:bold}
-      .bsx-modal .bsx-rmp-meta{color:#6b6b6b;font-size:12px}
+      :is(.bsx-modal,.bsx-native) .bsx-rmp-link{font-size:11px;font-weight:600;margin-left:4px;white-space:nowrap}
+      :is(.bsx-modal,.bsx-native) .bsx-rmp-slot{display:block;margin:1px 0 3px}
+      :is(.bsx-modal,.bsx-native) .bsx-rmp-score{font-weight:bold}
+      :is(.bsx-modal,.bsx-native) .bsx-rmp-meta{color:#6b6b6b;font-size:12px}
       .bsx-grades .gd-diff{font-size:12px;font-weight:600;margin-left:6px}
       .bsx-grades .gd-bar{display:flex;height:14px;border-radius:3px;overflow:hidden;margin:6px 0 4px;max-width:520px;background:#eee}
       .bsx-grades .gd-bar span{display:block;height:100%}
@@ -759,6 +759,56 @@
       });
     }
 
+    // ---- Add RMP + grades to the scheduler's OWN section dialog (classes already in your cart) ------------
+    function decorateNativeModal() {
+      const m = [...document.querySelectorAll('.modal.in')].find(x => !x.classList.contains('bsx-modal'));
+      if (!m || m.querySelector('.bsx-native')) return;
+      const body = m.querySelector('.modal-body');
+      const cm = (m.querySelector('.modal-header')?.textContent || '').match(/\b([A-Z]{2,5})\s+(\d{3,4}[A-Z]?)\b/);
+      if (!body || !cm) return;
+      const [, subj, num] = cm;
+      const instrLi = [...body.querySelectorAll('li')].find(li => /^\s*Instructor\s*:/.test(li.textContent));
+      const instructor = instrLi ? instrLi.textContent.replace(/^\s*Instructor\s*:\s*/, '').trim() : '';
+      if (instrLi && instructorsOf(instructor).length) {
+        const span = document.createElement('span');
+        span.className = 'bsx-native';
+        // the dialog already shows the name, so keep only the link + score slot
+        span.innerHTML = ' ' + instructorHtml(instructor, 'tamu').replace(/<span class="bsx-instr">[^<]*/g, '<span class="bsx-instr">');
+        instrLi.appendChild(span);
+      }
+      const extra = document.createElement('div');
+      extra.className = 'bsx-native';
+      extra.innerHTML = `<div class="bsx-m-more"><details open><summary>Grade distribution</summary>${
+        renderSection({ key: 'grades', subj, num, instructor })}</details></div>`;
+      body.appendChild(extra);
+      fillRmpSlots(m);
+      fillGrades(m);
+    }
+
+    // ★ on the scheduler's own calendar blocks (cart sections), when "RMP scores" is on.
+    function decorateNativeChips(nativeChips) {
+      for (const ch of nativeChips) {
+        const line = ch.querySelector('[class*="descrCss"]:not([class*="mobile"]) > div:nth-child(2)');
+        if (!line) continue;
+        const old = line.querySelector('.bsx-native-star');
+        const name = [...line.childNodes].filter(n => n !== old).map(n => n.textContent).join('').trim();
+        const single = instructorsOf(name).length === 1;
+        if (rmpOn() && single && !rmpCached(name, 'tamu')) {
+          const k = rmpKey(name, 'tamu');
+          if (Date.now() - (rmpFailed[k] || 0) >= 6e5) rmpLookup(name, 'tamu').then(schedule, () => { rmpFailed[k] = Date.now(); });
+        }
+        const d = rmpOn() && single ? rmpCached(name, 'tamu')?.data : null;
+        const want = d?.count ? `★${d.rating.toFixed(1)}` : '';
+        if (!want) { old?.remove(); continue; }
+        if (old?.textContent === want) continue;
+        const star = old || document.createElement('span');
+        star.className = 'bsx-native-star';
+        star.textContent = want;
+        star.style.cssText = `color:${ratingColor(d.rating)};margin-left:4px`;
+        if (!old) line.appendChild(star);
+      }
+    }
+
     // Small "★ 4.2" for calendar blocks, from cache only (render() requests missing ones in the background).
     function chipRating(c) {
       if (!rmpOn()) return '';
@@ -872,6 +922,7 @@
       const week = selectedWeek(cal);
 
       const nativeChips = [...cal.querySelectorAll('[class*="chipCss"]')].filter(ch => !ch.classList.contains(CHIP));
+      decorateNativeChips(nativeChips);
       const nativeFor = course => nativeChips.filter(ch => ch.querySelector(`button[aria-label*="for ${CSS.escape(course)} on"]`));
       const toHide = previews.flatMap(p => nativeFor(p.course));
       // First preview of a course keeps that course's own color; extra sections of it get distinct colors.
@@ -938,7 +989,7 @@
     let queued = false;
     // setTimeout rather than requestAnimationFrame: rAF is paused in background tabs,
     // which would delay updates when you sync from a Blinn tab.
-    const schedule = () => { if (!queued) { queued = true; setTimeout(() => { queued = false; render(); }, 30); } };
+    const schedule = () => { if (!queued) { queued = true; setTimeout(() => { queued = false; render(); decorateNativeModal(); }, 30); } };
     new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
     addEventListener('resize', schedule);
     addEventListener('popstate', schedule);
