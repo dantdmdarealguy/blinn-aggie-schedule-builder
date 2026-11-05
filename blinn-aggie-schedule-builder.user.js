@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blinn Classes on Aggie Schedule Builder
 // @namespace    https://github.com/dantdmdarealguy/blinn-aggie-schedule-builder
-// @version      2.2.0
+// @version      2.2.1
 // @description  Shows your registered Blinn College classes on TAMU's Aggie Schedule Builder calendar, styled like native sections, and lets you preview swapping a TAMU section.
 // @author       dantdmdarealguy
 // @license      MIT
@@ -254,7 +254,13 @@
       .${BAR} .bsx-dot{display:inline-block;width:9px;height:9px;border-radius:50%}
       .${BAR} .bsx-clear{background:none;border:1px solid #999;color:#333;padding:1px 8px}
       .${BAR} .bsx-err,.${BAR} .bsx-warn{color:#b00020}
-      /* Section-details modal: Bootstrap 3 classes from the page + copies of the scheduler's own modal styles */
+      /* Section-details modal: Bootstrap 3 classes from the page + copies of the scheduler's own modal styles.
+         The dialog is capped to the window with a pinned header (× always reachable) and a scrolling body,
+         so long Blinn details (e.g. Prerequisites) can't push the top out of reach. */
+      .bsx-modal .modal-dialog{margin:30px auto;height:auto;min-height:0}
+      .bsx-modal .modal-content{display:flex;flex-direction:column;max-height:calc(100vh - 60px)}
+      .bsx-modal .modal-header{flex:0 0 auto}
+      .bsx-modal .modal-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
       .bsx-modal .bsx-m-title{display:inline-block;font-size:1.5em;font-weight:bold;line-height:1.2;padding-left:10px}
       .bsx-modal .bsx-m-tag{display:inline-block;vertical-align:middle;margin-left:10px;font-size:11px;font-weight:600;padding:2px 7px;
         border-radius:3px;background:var(--c,#500000);color:#fff}
